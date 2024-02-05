@@ -1,0 +1,577 @@
+---
+title: "TD2 Asset Management Machine learning"
+author: "CABAL Paul-Louis"
+date: "06/02/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## TP 2
+
+Objectif du TP
+Ce TP consiste en deux parties indépendantes afin d’illustrer les applications de “Machine Learning” dans la
+gestion d’actifs:
+Modèle de régression linéaire pour prédire le rendement futur du stock Amazon. (Voir CM3)
+Problème d’optimisation de Markowitz avec la régularisation L2. (Voir CM4)
+
+
+```{r cars}
+summary(cars)
+```
+
+## Partie I: Modèle de régression linéaire pour prédire le rendement futur du stock Amazon
+
+Cette partie consiste à construire le modèle de régression linéaire pour prédire le rendement futur du stock
+Amazon (NYSE). Mathématiquement, nous allons construire un modèle linéaire:
+Yt10 dénote le rendement de 10 prochains jours à prédire, et dénote -ème feature utilisé dans le
+modèle prédictif linéaire.
+
+Préparation :
+
+Nous allons d’abord importer les prix historiques (close) du srock Amazon et calculer les rendements ainsi que
+les moyennes mobiles comme des features du modèle linéaire.
+
+
+```{r pressure, echo=FALSE}
+rm(list=ls())
+set.seed(123)
+
+
+#### Importer des donnees ####
+library(openxlsx)
+Data = read.xlsx("TD2_Amazon.xlsx", sheet = 1, detectDates = TRUE, skipEmptyRows = FALSE)
+
+Price = Data$close
+Date = Data$date
+plot(as.Date(Date, "%Y-%m-%d"), Price, lwd = 4, type = "l", xlab = 'Date')
+```
+
+
+Nous fournissons ci-dessous les codes de la fonction myreturn() qui peut calculer “backward returns” ou
+“forward returns” pour une certaine Period:
+
+- “bakward returns”: Pour une TimePosition choisie, “backward returns” avec un Lag sont definis
+comme:
+
+  Rt,Lag:= Pt / P(t-lag) − 1, TimePosition − Period < t ≤ TimePosition
+  
+- “forward returns”: Pour une TimePosition choisie, “forward returns” avec un Lag sont definis comme
+  
+  Yt,Lag:=P(t+lag) / Pt − 1, TimePosition ≤ t < TimePosition + Period
+
+
+```{r}
+
+#### Fonction genrerale pour calculer the backward (Direction = 0) returns ou forward (Direction = 1) returns avec un "Lag" donnée, pour une certain période "Period". ###
+
+myreturn <- function(Price, TimePosition, Lag, Direction = 0, Period = 252) {
+  
+ if (Direction == 0) {
+ # backward returns
+ Ret = Price[(TimePosition-Period+1):TimePosition] / Price[(TimePosition-Period+1-Lag):(TimePosition-Lag)] - 1
+ }
+  
+ else {
+   
+ # forward returns
+ Ret = Price[(TimePosition+Lag):(TimePosition+Period-1+Lag)] / Price[(TimePosition):(TimePosition+Period-1)] - 1
+ 
+ }
+ return (Ret)
+}
+
+
+```
+
+
+Nous fournissons ci-dessous les codes de la fonction myma() qui peut calculer les moyennes mobiles avec
+une fenêtre de jours pour une certaine Period : 
+
+MA (Rt, W) = (1/W) sum(R(t-k)),k=0->W-1, TimePosition − Period < t ≤ TimePosition
+
+
+
+```{r}
+#### Fonction pour calculer compute moving average (MA) ####
+
+myma <- function(Data, TimePosition, W, Period = 252)
+  {
+   R = Data[(TimePosition-Period+1):TimePosition]
+  for (k in 1:(W-1)) 
+   {
+      R = R + Data[(TimePosition-Period+1-k):(TimePosition-k)]
+ }
+ R = R / W
+ return (R)
+}
+
+```
+
+A l’aide des fonctions myreturn() et myma(), nous allons construire la variable expliquée et les variables
+explicatives de notre modèle linéaire:
+
+- La variable expliquée Yt,10 dénote le rendement de 10 prochains jours à prédire.
+- Les variables explicatives sont des moyennes mobiles avec fenêtres differents (1, 2, 4, 8, 16, 32, 64,128) sur les rendements journaliers.
+
+Nous allons construire le moèle linéaire avec 2 ans des données pour une TomePosition choisie.
+
+
+```{r}
+PredDays = 10 # On creera un modele de regression lineaire pour expliquer "10-day future returns".
+WinLen = 252 * 2 # On choisit une fenetre de 2 ans pour faire le modèle de regression.
+TimePosition = WinLen + 252 # On choisit une date comme "TimePosition" pour faire la regression lineaire.
+
+R = myreturn(Price, TimePosition, Lag = 1, Direction = 0, Period = WinLen + 128 - 1)
+# On compute les rendements journaliers (Backward returns avec lag = 1). / Remarque: on compute 127 extra points pour calculer les moyennes mobiles des rendements dans la partie suiante.
+
+Yt = myreturn(Price, TimePosition-WinLen+1, Lag = 10, Direction = 1, Period = WinLen) 
+# On compute les "10-day future returns". (Forward returns avec lag = 10).
+# On compute les moyennes mobiles des rendements avec differents "Window" pour préparer des"features" dans le modèle de regression.
+
+Ftm1 = R[(length(R)-WinLen+1):length(R)]
+Ftm2 = myma(R, length(R), W = 2, Period = WinLen)
+Ftm4 = myma(R, length(R), W = 4, Period = WinLen)
+Ftm8 = myma(R, length(R), W = 8, Period = WinLen)
+Ftm16 = myma(R, length(R), W = 16, Period = WinLen)
+Ftm32 = myma(R, length(R), W = 32, Period = WinLen)
+Ftm64 = myma(R, length(R), W = 64, Period = WinLen)
+Ftm128 = myma(R, length(R), W = 128, Period = WinLen)
+M = cbind(Ftm1, Ftm2, Ftm4, Ftm8, Ftm16, Ftm32, Ftm64, Ftm128)
+```
+
+
+## Questions
+
+# Q1: Correlation analysis
+
+Nous allons calculer les coefficients de corrélation entre les variable expliquée et nos vecteurs de
+features. Que pouvez-vous dire de ces corrélations?
+
+```{r}
+Vec_Cor = cor(Yt, M) 
+barplot(Vec_Cor)
+```
+
+Ici on remarque une correlation négative  entre Yt10 (le rendement de 10 prochains jours à prédire) et Ftmk(La moyenne mobile sur une periode)
+Si la correlation est négative, cela veut dire que les deux actifs agissent de manière opposés.
+Cela veut dire qu'en fonction de la valeur de notre rendement, on pourra determiner un potentiel retour à la moyenne.
+
+## Q2: Preprocessing
+
+Notre modèle de régression suppose un processus homoscédastique. 
+Donc, il est nécessaire de standardiser la variable expliquée et les vecteurs de features dans le processus de régression.
+
+- Pour la variable expliquée Y(t,10), il suiffit d’avoir une moyenne nulle.
+- Pour les vecteurs de features F(tmk), la normalisation de chaque facteur d’agit d’avoir une moyenne nulle et une variance unitaire
+
+```{r}
+Ycen = Yt -mean(Yt)
+Mnorm = scale(M, center = TRUE, scale = TRUE) 
+```
+
+## Q3: Régression linéaire
+
+Nous pouvons maintenant construire un modèle linéaire en utilisant tous les features. 
+Que pouvez-vous conclure du résumé du modèle?
+
+```{r}
+linModelFull = lm(y~. , data = data.frame(Mnorm, y = Ycen))
+summary(linModelFull)
+```
+
+On remarque qu'en faisant la regression sur les Yt centré,il y a beaucoup de valeur qui sont proche de 1 donc très peu significative mais une valeur est est très proche de 0 donc on peut garder cette variable comme significative pour la création de notre modèle simplifié.
+
+#Q4: Méthode Backward pour la sélection des variables
+
+Nous allons appliquer la méthode Backward pour la sélectiondes variables. A chaque étape, nous enlevons 
+la variable dont la valeur t-statistics est la plus petite. Laisser nous appelons ce modèle réduit linModelRed. 
+
+Que pouvez-vous conclure en comparant les features sélectionnées aux analyse de corrélation?
+Comment savoir si le modèle réduit préserve la même qualité d’ajustement que le modèle complet? 
+(Hint: Nous pouvons utiliseranova () pour comparer les deux modèles.)
+
+
+```{r}
+
+linModelRed = lm(y~Ftm4 + Ftm8 + Ftm16 + Ftm32 + Ftm64 + Ftm128, data = data.frame(Mnorm, y = Ycen))
+summary(linModelRed)
+
+
+```
+
+On remarque ici que les valeurs les plus faibles sont Ftm4, Ftm64, donc on les retire.
+
+```{r}
+linModelRed = lm(y~ Ftm8 + Ftm16 +  Ftm32 + Ftm128, data = data.frame(Mnorm, y = Ycen))
+summary(linModelRed)
+```
+
+On remarque ici que Ftm32 et Ftm8 sont les plus élevés, donc on les retire
+
+```{r}
+linModelRed = lm(y~  Ftm16  + Ftm128, data = data.frame(Mnorm, y = Ycen))
+summary(linModelRed)
+```
+
+On remarque que les deux qui restent sont significatives
+On verifie maintenant si le modèle complet et le modèle réduit préserve la même qualité d'ajustement avec le test anova.
+
+```{r}
+# F-test : model comparison
+
+anova(linModelFull,linModelRed)
+```
+
+On remarque qu'on a la p-value supérieur a 0.05 donc on accepte l'hypothese H0 (homogénéité des variances) donc le modèle réduit préserve la même qualité d’ajustement que le modèle complet.
+On a réduit le modèle avec 8 features à 2.
+
+# 5: Ridge and Lasso
+
+Nous pouvons utiliser le package glmnet pour effectuer des ridge et des lasso régressions. 
+Lisez le document glmnet et complétez les codes suivants. 
+Comparez les deux figures et interprétez-les.
+Page 40 du CM4
+
+```{r}
+install.packages("glmnet")
+library(glmnet)
+
+rdg = cv.glmnet(Mnorm, Ycen, alpha = 0) # ridge
+lso = cv.glmnet(Mnorm, Ycen, alpha = 1) #lasso
+
+plot(rdg$glmnet.fit, "lambda", label = TRUE, lwd = 4)
+plot(lso$glmnet.fit, "lambda", label = TRUE, lwd = 4)
+
+
+```
+
+Les deux graphiques ci dessus montre l'importance  des variables en faisant varier lambda. 
+On voit que les variables les plus importables sont la 8 ème valeur la 4 ème et la 5 ème.
+
+Pour différencier les deux plots :
+
+Le premier plot, celui du Ridge se caractérise de la manière suivante :
+  Toutes les features convergents vers 0 et l'atteignent au même moment
+  
+Le deuxième plot, celui du lasso se caractérise de la manière suivante :
+  Toutes les features convergent vers 0 mais pas au même moment
+
+
+
+Nous pouvons extraire les variables optimales pour la regression Lasso en utilisant la validation croisée.
+Nous refaisons un modèle linéaire standard sur les variables extraites. Comparez la qualité du modèle Lasso au
+modèle complet en utilisant les statistiques F de l’ANOVA
+
+```{r}
+'%!in%'<-function(x,y)!('%!in%' (x,y))
+
+coefLso = coef(lso, s = 'lambda.min') # Lasso parameter from minimizing cross validation error
+varsLso = row.names(coefLso)[which(coefLso != 0)]
+varsLso = varsLso[varsLso %!in% '(intercept)']
+formLso = as.formula(paste("y~", paste(varsLso, collapse = "+")))
+
+# refit the selected factors
+linModelLasso = lm(formLso, data = data.frame(Mnorm, y = Ycen))
+
+summary(linModelLasso)
+# F-Test to confirm
+anova(linModelFull,linModelLasso)
+
+```
+
+## Partie II: Problème d’optimisation de Markowitz avec la régularisation L2
+
+Dans cet exercice, nous allons utiliser les données des 4 stocks (Coca Cola, Citi Group, Walmart, Nike) aux
+Etats-Unis pour illustrer la technique de régularisation L2 dans l’optimisation du portefeuille (Mean-variance
+optimisation de Markowitz). Nous disposons d’une base de données de 3286 lignes (nombre d’observations)
+et 4 colonnes (nombre de sociétés).
+
+```{r}
+rm(list=ls())
+#### Importer les donnees ####
+Stocks = read.csv(file="TD2_MVO.csv", header=TRUE, sep=";")
+Date = Stocks$Index
+Values = Stocks[c('CocaCola', 'Citigroup', 'Walmart', 'Nike')]
+print(dim(Values))
+```
+
+```{r}
+#### Tracer les prix historiques ####
+plot.ts(Values, lwd = 1, type = "l") 
+```
+
+#II.1/ Tracer la frontière efficiente via la méthode de simulation
+
+L’objectif de cette partie est de générer 5000 portefeuilles fictifs (les combinaisons aléatoires de 4 stocks) pour
+visualiser la frontière efficiente dans la théorie de Markowitz. Nous calculons d’abord le rendement annuel
+composé (CGAR - compound annual growth rate) et la volatilité annuelle pour chaque actif avec les fonctions
+dans TD1.
+
+```{r}
+#### Fonction pour calculer les rendements ####
+
+Compute_Return <- function(Price){
+ Price_Clean = Price[!is.na(Price)]
+ n = length(Price_Clean)
+ ret = (Price_Clean[2:n]/Price_Clean[1:(n-1)]) - 1
+ ret = c(0, ret)
+ return (ret)
+}
+#### Fonction pour calculer le CGAR ####
+
+Compute_CAGR <- function(Price, Multiplicator = 252){
+ Price_Clean = Price[!is.na(Price)]
+ n = length(Price_Clean)
+ ret = (Price_Clean[n]/Price_Clean[1])^(Multiplicator/(n-1))-1
+ return (ret)
+}
+#### Fonction pour calculer la volatilite ####
+
+Compute_Vol <- function(Price, Multiplicator = 252){
+ Price_Clean = Price[!is.na(Price)]
+ n = length(Price_Clean)
+ ret = Compute_Return(Price_Clean)
+ mu = mean(ret)
+ sigma_daily = sqrt(sum((ret - mu)^2)/(n-1))
+ sigma = sqrt(Multiplicator)*sigma_daily
+ return (sigma)
+}
+```
+
+# Q1: Utiliser la fonction ‘apply’ et ‘Compute_CAGR’ pour calculer le CAGR de chaque stock
+
+```{r}
+Mus = apply(Values, 2, FUN = Compute_CAGR)
+
+```
+
+# Q2: Utiliser la fonction ‘apply’ et ‘Compute_Return’ pour calculer les rendements de chaque stock et puis calculer la matrice de covariance (annuelle) avec la fonction ‘cov’
+
+```{r}
+Return = apply(Values, 2, FUN = Compute_Return)
+Sigma = cov(Return)*252
+```
+
+Dans la partie suivante, nous allons simuler les allocations de stocks pour construire les portefeuilles fictifs.
+Pour le faire, nous pouvons simuler 4 chiffres de 0 à 1 et puis nous les normalisons afin d’avoir la somme
+100%. Nous simulons au total 5000 portefeuilles fictifs.
+
+# Q3: Calculer le rendement du portefeuille et la volatilité du portefeuille fictif avec l’opérateur ‘%*%’ (produit matriciel)
+
+```{r}
+Num_asset = dim(Return)[2] ## Nombre d'actifs
+Num_portfolios = 5000 ## Nombre de simulation
+List_Ret = c()
+List_Vol = c()
+List_SR = c()
+
+for(Ind in 1:Num_portfolios){
+  
+ ## Les allocations du portefeuille sont générées aléatoirement entre 0 et 1 et puis nous les normalisons afin d'avoir la somme 100%.
+  
+ Weights = runif(Num_asset)
+ Weights = as.matrix(Weights/sum(Weights))
+ 
+ ## Nous devons calculer le rendement et la volatilité du portefeuille simulé avec l'opérateur %*% (produit matriciel).
+ 
+ Ret_portfolio = Mus %*% Weights
+ Vol_portfolio = sqrt(t(Weights) %*% (Sigma %*% Weights)) # page 42 du cours
+
+ SR_portfolio = Ret_portfolio / Vol_portfolio
+
+ List_Ret = c(List_Ret, as.numeric(Ret_portfolio))
+ List_Vol = c(List_Vol, as.numeric(Vol_portfolio))
+ List_SR = c(List_SR, as.numeric(SR_portfolio))
+}
+#### Tracer la frontiere efficiente ####
+xlim = c(0.1, 0.5)
+ylim = c(-0.05, 0.2)
+plot(List_Vol, List_Ret, type = 'p', pch= 16, cex = 0.5, xlab = 'Vol', ylab = 'Ret', xlim = xlim, ylim = ylim)
+
+```
+
+Chaque point tracé signifie un portefeuille fictif. Donc, ce nuage de points est la totalité des combinaisons
+possibles entre les quatre stocks. 
+Nous pouvons voir clairement l’existence de la frontière efficiente.
+On peut alors faire notre choix entre le plus de returns ou la plus faible volatilité.
+
+
+
+# II.2/ Tracer la frontière efficiente via la programmation quadratique
+
+L’objectif de cette partie est de refaire l’exercice précédente et de retrouver la frontière efficiente via la programmation quadratique.
+Nous allons utiliser la forme gamma-problème du problème d’optimisation de Markowitz (CM4) et nous rappelons que est le coefficient de trade-off entre le rendement espéré et la volatilité.
+gamma-problème:
+(voir pdf)
+[\w* ]
+
+gamma-problème peut s’écrire sous forme de la programmation quadratique (CM4).
+
+Nous pouvons utiliser la fonction ‘solve.QP’ dans le package ‘quadprog’ afin de réaliser la programmation
+quadratique en R. Nous devons lire attentivement le document de la fonction ‘solve.QP’ (A l’aide de la
+commande ‘?quadprog::solve.QP’) et nous décidons les valeurs des arguments: Dmat, Amat, dvec, bvec.
+Nous pouvons profiter de l’argument meq pour avoir directement la contrainte d’égalité.
+Nous allons résoudre le problème d’optimisation sous forme de la programmation quadratique pour les
+différents valeurs de gamma.
+
+
+# Q4: Déterminer les arguments pour la programmation quadratique et calculer le rendement du portefeuille et la volatilité du portefeuille avec l’opérateur ‘%*%
+
+
+```{r}
+library(quadprog)
+gammas = seq(from = 0, to = 1, by = 0.01)
+List_Ret_QP = c()
+List_Vol_QP = c()
+List_SR_QP = c()
+for(Ind in gammas){
+ #### Déterminer les arguments de la programmation quadratique ####
+ Dmat = Sigma
+ Amat = cbind(rep(1, Num_asset), diag(Num_asset))
+ dvec = Mus*Ind
+ bvec = c(1, rep(0, Num_asset))
+ meq = 1
+
+ qp.out = solve.QP(Dmat=Dmat, dvec=dvec, Amat=Amat, bvec=bvec, meq = meq)
+ Weights =qp.out$solution
+
+ #### Calculer le rendement du portefeuille et la volatilite du portefeuille avec l’opérateur '%\*%' ####
+ Ret_portfolio = Mus %*% Weights
+ Vol_portfolio = sqrt(t(Weights) %*% (Sigma %*% Weights))
+
+ SR_portfolio = Ret_portfolio / Vol_portfolio
+
+ List_Ret_QP = c(List_Ret_QP, as.numeric(Ret_portfolio))
+ List_Vol_QP = c(List_Vol_QP, as.numeric(Vol_portfolio))
+ List_SR_QP = c(List_SR_QP, as.numeric(SR_portfolio))
+}
+#### Tracer la frontiere efficiente ####
+xlim = c(0.1, 0.5)
+ylim = c(-0.05, 0.2)
+plot(List_Vol, List_Ret, type = 'p', pch= 16, cex = 0.5, xlim = xlim, ylim = ylim, xlab = 'Vo
+latility', ylab = 'Return')
+par(new = TRUE)
+plot(List_Vol_QP, List_Ret_QP, type = 'l', col = 'red', pch= 16, lwd = 4, xlim = xlim, ylim =
+ylim, xlab = NA, ylab = NA)
+
+```
+
+
+Nous pouvons voir que la frontière efficiente est bien collée avec le nuage de points.
+
+# II.3/ L’allocation du portefeuille au cours du temps
+
+Dans cette partie, nous fixons la valeur de et nous allons rebalancer le portefeuille tous les 22 jours (environ 1 mois). 
+A chaque date de rebalancement, nous utilisons un an de données passées pour estimer le rendement espéré et la volatilité.
+
+Q5: Nous devons utiliser les réponses de Q1 Q4 afin de remplir les trous dans les codes ci-dessous.
+
+```{r}
+gamma = 0.02
+Num_Observation = dim(Return)[1]
+Index_Rebalancement = seq(500, Num_Observation - 22, by = 22)
+Weights = matrix(nrow = Num_Observation, ncol = 4)
+
+for(Ind in Index_Rebalancement)
+  {
+ Values_tmp = Values[(Ind-252):Ind, ]
+ Return_tmp = Return[(Ind-252):Ind, ]
+
+ #### Calculer les CAGR et les volatilite avec un an de données ####
+ 
+ Mus_tmp = apply(Values_tmp, 2, FUN = Compute_CAGR)
+ Sigma_tmp = cov(Return_tmp)*252
+
+ #### Déterminer les arguments de la programmation quadratique ####
+ 
+ Dmat = Sigma_tmp
+ dvec = gamma*Mus_tmp
+ Amat = cbind(rep(1, Num_asset), diag(Num_asset))
+ bvec = c(1, rep(0, Num_asset))
+ meq = 1
+
+ qp.out = solve.QP(Dmat=Dmat, dvec=dvec, Amat=Amat, bvec=bvec, meq = meq)
+ Weights[(Ind+1):(Ind+22), ] = matrix(rep(qp.out$solution, 22), ncol = Num_asset, byrow = TRUE)
+ 
+}
+
+Weights = Weights[rowSums(is.na(Weights)) != ncol(Weights), ]
+
+#### Tracer les allocations du portefeuille au cours du temps ####
+
+library(ggplot2)
+Time = as.numeric(rep(seq(1, dim(Weights)[1]), each = dim(Weights)[2]))
+Value = round(as.vector(t(Weights)), 4)
+Group = rep(c('CocaCola', 'Citigroup', 'Walmart', 'Nike'), times = dim(Weights)[1])
+Data_Graph = data.frame(Time, Value, Group)
+ggplot(Data_Graph, aes(x=Time, y=Value, fill=Group)) + geom_area()
+
+```
+
+
+II.4/ La technique de la régulation L2
+Dans cette partie, nous allons voir l’application de la technique de la régularisation L2. L’objectif est de
+résoudre le problème d’instabilité dans l’optimisation mean-variance de Markowitz et réduire les turnovers du
+portefeuille. Nous rappelons que le problème d’optimisation ( -problème) avec la régularisation L2 peut
+s’écrire sous forme:
+ signifie l’allocation de la date de rebalancement précédente.
+Nous pouvons aussi écrire la fonction d’objectif du problème ci-dessus sous forme de la programmation
+quadratique:
+
+(voir pdf)
+
+Nous pouvons le développer:
+Comme est un terme constant, nous pouvons le négliger.
+
+Finalement, la version de la programmation quadratique du problème initial est :
+(voir pdf)
+
+#Q6: Nous pouvons prendre les codes de Q5 et actualiser les valeurs de Dmat, dvec afin d’ajouter la régularisation L2 dans l’optimisation. Nous pouvons tester différentes valeurs de pour voir l’impact de la régularisation.
+
+```{r}
+#### Loop MVO via quadprog + Regularisation (Long-only, No leverage)
+Num_Observation = dim(Return)[1]
+Index_Rebalancement = seq(500, Num_Observation - 22, by = 22)
+Weights_Ridge = matrix(nrow = Num_Observation, ncol = 4)
+Weights_Old = rep(0.25, 4) #### Les allocations initiales du portefueille
+for(Ind in Index_Rebalancement){
+ Values_tmp = Values[(Ind-252):Ind, ]
+ Return_tmp = Return[(Ind-252):Ind, ]
+
+ #### Calculer les CAGR et les volatilite avec un an de données ####
+ Mus_tmp = #...#
+ Sigma_tmp = #...#
+
+ rho = 0.05
+
+ #### Déterminer les arguments de la programmation quadratique ####
+ Dmat = #...#
+ dvec = #...#
+ Amat = #...#
+ bvec = #...#
+ meq = #...#
+
+ qp.out = solve.QP(Dmat=Dmat, dvec=dvec, Amat=Amat, bvec=bvec, meq = meq)
+ Weights_Ridge[(Ind+1):(Ind+22), ] = matrix(rep(qp.out$solution, 22), ncol = Num_asset, byr
+ow = TRUE)
+ Weights_Old = qp.out$solution
+}
+Weights_Ridge = Weights_Ridge[rowSums(is.na(Weights_Ridge)) != ncol(Weights_Ridge), ]
+#### Tracer les allocations du portefeuille au cours du temps ####
+library(ggplot2)
+Time = as.numeric(rep(seq(1, dim(Weights_Ridge)[1]), each = dim(Weights_Ridge)[2]))
+Value = round(as.vector(t(Weights_Ridge)), 4)
+Group = rep(c('CocaCola', 'Citigroup', 'Walmart', 'Nike'), times = dim(Weights_Ridge)[1])
+Data_Graph <- data.frame(Time, Value, Group)
+ggplot(Data_Graph, aes(x=Time, y=Value, fill=Group)) + geom_area()
+
+```
+
+Nous devons voir que:
+Quand rho est très petit, la régularisation L2 n’a pas d’impact sur les résultats d’optimisation.
+Quand rho est très grand, la partie de la régularisation L2 est dominante dans la fonction d’objectif et nous
+pouvons avoir un effet de limiter les turnovers.
+
